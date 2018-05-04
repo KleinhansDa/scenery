@@ -13,15 +13,15 @@ rendertargets:
   DSSDOBuffer:
     size: 0.5, 0.5
     attachments:
-      Occlusion: RGBA_UInt8
+      Occlusion: R_UInt8
   DSSDOTemp1:
     size: 0.5, 0.5
     attachments:
-      Occlusion: RGBA_UInt8
+      Occlusion: R_UInt8
   DSSDOTemp2:
     size: 0.5, 0.5
     attachments:
-      Occlusion: RGBA_UInt8
+      Occlusion: R_UInt8
   HDRBuffer:
     attachments:
       Color: RGBA_Float32
@@ -44,12 +44,15 @@ renderpasses:
     parameters:
       Pass.displayWidth: 0
       Pass.displayHeight: 0
-      ssaoRadius: 0.5
+      ssaoRadius: 1.2
       ssaoSamples: 16
-      maxDistance: 0.2
+      IntensityScale: 1.0
+      Epsilon: 0.001
+      BiasDistance: 0.1
+      Contrast: 0.4
     shaders:
       - "FullscreenQuad.vert.spv"
-      - "DSSDO.frag.spv"
+      - "SAO.frag.spv"
     inputs:
       - GeometryBuffer.NormalsMaterial
       - GeometryBuffer.ZBuffer

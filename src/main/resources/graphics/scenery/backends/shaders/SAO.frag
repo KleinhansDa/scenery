@@ -1,11 +1,11 @@
 #version 450 core
 #extension GL_ARB_separate_shader_objects: enable
+#extension GL_EXT_control_flow_attributes : enable
 
 #define PI 3.14159265359
 
 layout(set = 3, binding = 0) uniform sampler2D InputNormalsMaterial;
-layout(set = 3, binding = 1) uniform sampler2D InputDiffuseAlbedo;
-layout(set = 3, binding = 2) uniform sampler2D InputZBuffer;
+layout(set = 4, binding = 0) uniform sampler2D InputZBuffer;
 
 layout(location = 0) out float FragColor;
 layout(location = 0) in vec2 textureCoord;
@@ -19,8 +19,8 @@ layout(set = 0, binding = 0) uniform VRParameters {
 } vrParameters;
 
 layout(set = 1, binding = 0) uniform LightParameters {
-    mat4 ViewMatrix;
-    mat4 InverseViewMatrix;
+    mat4 ViewMatrices[2];
+    mat4 InverseViewMatrices[2];
     mat4 ProjectionMatrix;
     mat4 InverseProjectionMatrix;
     vec3 CamPosition;
@@ -55,17 +55,42 @@ const int ROTATIONS[] = {
 };
 
 vec3 viewFromDepth(float depth, vec2 texcoord) {
-    mat4 invHeadToEye = vrParameters.headShift;
-    invHeadToEye[0][3] += currentEye.eye * vrParameters.IPD;
+    vec2 uv = (vrParameters.stereoEnabled ^ 1) * texcoord + vrParameters.stereoEnabled * vec2((texcoord.x - 0.5 * currentEye.eye) * 2.0, texcoord.y);
 
 	mat4 invProjection = (vrParameters.stereoEnabled ^ 1) * InverseProjectionMatrix + vrParameters.stereoEnabled * vrParameters.inverseProjectionMatrices[currentEye.eye];
-	mat4 invView = (vrParameters.stereoEnabled ^ 1) * InverseViewMatrix + vrParameters.stereoEnabled * InverseViewMatrix * invHeadToEye;
+	mat4 invView = (vrParameters.stereoEnabled ^ 1) * InverseViewMatrices[0] + vrParameters.stereoEnabled * (InverseViewMatrices[currentEye.eye]);
 
-    vec4 clipSpacePosition = vec4(texcoord * 2.0 - 1.0, depth, 1.0);
+#ifndef OPENGL
+    vec4 clipSpacePosition = vec4(uv * 2.0 - 1.0, depth, 1.0);
+#else
+    vec4 clipSpacePosition = vec4(uv * 2.0 - 1.0, depth * 2.0 - 1.0, 1.0);
+#endif
     vec4 viewSpacePosition = invProjection * clipSpacePosition;
 
-//    viewSpacePosition /= viewSpacePosition.w;
     return viewSpacePosition.xyz/viewSpacePosition.w;
+}
+
+vec3 viewSpaceFromDepth(float depth, vec2 texcoord) {
+#ifndef OPENGL
+    float d = depth;
+#else
+    float d = depth * 2.0 - 1.0;
+#endif
+
+    vec2 uv2 = texcoord * 2.0 - vec2(1.0);
+	mat4 invProjection = (vrParameters.stereoEnabled ^ 1) * InverseProjectionMatrix + vrParameters.stereoEnabled * vrParameters.inverseProjectionMatrices[currentEye.eye];
+	mat4 invView = (vrParameters.stereoEnabled ^ 1) * InverseViewMatrices[0] + vrParameters.stereoEnabled * (InverseViewMatrices[currentEye.eye]);
+	mat4 ViewMatrix = (vrParameters.stereoEnabled ^ 1) * ViewMatrices[0] + vrParameters.stereoEnabled * (ViewMatrices[currentEye.eye]);
+
+	mat4 inverseVP = invView * invProjection;
+	vec4 tmp = inverseVP * vec4(uv2, -1.0, 1.0);
+	vec3 cameraFarPlaneWorld = (tmp/tmp.w).xyz;
+
+	vec3 camToPosRay = normalize(cameraFarPlaneWorld - CamPosition);
+	vec3 originWorld = camToPosRay * d + CamPosition;
+    vec3 originView = (ViewMatrix * vec4(originWorld, 1.0)).xyz;
+
+    return originView;
 }
 
 vec3 tapLocation(int index, float angle) {
@@ -160,8 +185,9 @@ void main() {
 
 	vec3 N = DecodeOctaH(texture(InputNormalsMaterial, textureCoord).rg);
 	float Depth = texture(InputZBuffer, textureCoord).r;
-    vec3 viewSpaceFragPos = viewFromDepth(Depth, textureCoord);
-    vec3 viewSpaceCamPos = (ViewMatrix * vec4(CamPosition, 1.0)).xyz;
+    vec3 viewSpaceFragPos = viewSpaceFromDepth(Depth, textureCoord);
+	mat4 ViewMatrix = (vrParameters.stereoEnabled ^ 1) * ViewMatrices[0] + vrParameters.stereoEnabled * (ViewMatrices[currentEye.eye]);
+    vec3 viewSpaceCamPos = vec3(0.0);//(ViewMatrix * vec4(CamPosition, 1.0)).xyz;
 
     float projScale = -displayHeight/(2.0 * tan(50.0 * 0.5));
     float randomAngle = (3 * ssC.x ^ ssC.y + ssC.x * ssC.y) * 10.0;
@@ -174,7 +200,7 @@ void main() {
         //Alchemy SSAO
         float A = 0.0f;
 
-        for (int i = 0; i < ssaoSamples; ++i) {
+       [[unroll]] for (int i = 0; i < ssaoSamples; ++i) {
             A += sampleSAO(ssC, viewSpaceFragPos, (ViewMatrix * vec4(N, 1.0)).xyz, scaledDiskRadius, randomAngle, i);
         }
 
